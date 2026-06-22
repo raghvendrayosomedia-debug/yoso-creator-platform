@@ -1,9 +1,17 @@
-import React, { useMemo, useState } from 'react';
+/// <reference types="vite/client" />
+import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createClient } from '@supabase/supabase-js';
 import { Bell, Check, ChevronRight, CircleDollarSign, ClipboardList, FileText, LayoutDashboard, LogOut, Plus, Send, Settings, Users } from 'lucide-react';
 import './styles.css';
 
 type Role = 'creator' | 'account_manager' | 'founder_finance' | 'cofounder';
+type AuthenticatedUser = { id: string; email: string; role: Role; creatorId?: string };
+
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '');
+const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 type Creator = { name:string; industry:string; followers:number; rateRepost:number|null; rateComment:number|null; status:'Active'|'Inactive'; email:string };
 const creators: Creator[] = [
   {name:'Ravi Kumar',industry:'Finance',followers:18400,rateRepost:150,rateComment:50,status:'Active',email:'ravi@gmail.com'},
@@ -21,9 +29,35 @@ const invoices = [
 const money = (value:number|null) => value === null ? 'Pending — rate not set' : new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0}).format(value);
 const Pill = ({children, kind='pending'}:{children:React.ReactNode,kind?:'good'|'bad'|'pending'|'neutral'}) => <span className={`pill ${kind}`}>{children}</span>;
 function App(){
- const [role,setRole] = useState<Role>('founder_finance'); const [page,setPage] = useState('Money Dashboard'); const [signedIn,setSignedIn]=useState(true); const [paid,setPaid]=useState<string[]>([]); const [sent,setSent]=useState(false);
+ const [user,setUser] = useState<AuthenticatedUser | null>(null);
+ const [loading,setLoading] = useState(true);
+ const [authError,setAuthError] = useState<string | null>(null);
+ const [page,setPage] = useState('My Tasks'); const [paid,setPaid]=useState<string[]>([]); const [sent,setSent]=useState(false);
+ useEffect(() => {
+   if (!supabase || !apiBaseUrl) { setAuthError('Authentication is not configured. Add the VITE_SUPABASE_* and VITE_API_BASE_URL variables.'); setLoading(false); return; }
+   const loadAuthenticatedUser = async () => {
+     const { data: { session } } = await supabase.auth.getSession();
+     if (!session) { setUser(null); setLoading(false); return; }
+     const response = await fetch(`${apiBaseUrl}/me`, { headers: { Authorization: `Bearer ${session.access_token}` } });
+     if (!response.ok) { await supabase.auth.signOut(); setAuthError('We could not verify your YOSO account. Please sign in again.'); setUser(null); setLoading(false); return; }
+     const profile = await response.json() as AuthenticatedUser;
+     setUser(profile); setPage(profile.role === 'creator' ? 'My Tasks' : profile.role === 'account_manager' ? 'Distribute Post' : 'Money Dashboard'); setLoading(false);
+   };
+   void loadAuthenticatedUser();
+   const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { if (!session) { setUser(null); setLoading(false); } });
+   return () => subscription.unsubscribe();
+ }, []);
+ const signInWithGoogle = async () => {
+   if (!supabase) return;
+   setAuthError(null);
+   const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
+   if (error) setAuthError(error.message);
+ };
+ const signOut = async () => { await supabase?.auth.signOut(); setUser(null); setPage('My Tasks'); };
+ if(loading) return <main className="splash"><div className="logo">YOSO<span>.</span></div><p>Checking your secure YOSO session…</p></main>;
+ if(!user) return <main className="splash"><div className="logo">YOSO<span>.</span></div><h1>Creator operations, engineered.</h1><p>One calm place for every task, invoice, and payment.</p><button onClick={signInWithGoogle} className="primary google">Continue with Google</button>{authError&&<p className="auth-error">{authError}</p>}<small>Use the Google account associated with your YOSO role.</small></main>;
+ const role = user.role;
  const nav = role==='creator'?['My Tasks','My Invoices','My Bank Details']: role==='account_manager'?['Distribute Post','Creator Directory','Task Board','Operations Dashboard']:['Distribute Post','Creator Directory','Task Board','Operations Dashboard','Rate Management','Approvals','Payments','Money Dashboard','Admin'];
- if(!signedIn) return <main className="splash"><div className="logo">YOSO<span>.</span></div><h1>Creator operations, engineered.</h1><p>One calm place for every task, invoice, and payment.</p><button onClick={()=>setSignedIn(true)} className="primary google">Continue with Google</button><small>Google OAuth is configured through Supabase in production.</small></main>;
  const render = () => {
   if(page==='Distribute Post') return <section><Hero eyebrow="Operations" title="Distribute a post" text="Send a structured task to the right creators without losing the thread."/><div className="card form"><label>Client<input placeholder="e.g. Nova Capital"/></label><label>LinkedIn post link<input type="url" placeholder="https://linkedin.com/posts/..."/></label><div className="two"><label>Repost quota<input type="number" defaultValue={4}/></label><label>Comment quota<input type="number" defaultValue={6}/></label></div><label>Targeting mode<select><option>Random (fair-spread)</option><option>By industry</option><option>Specific creators</option></select></label><button className="primary" onClick={()=>setSent(true)}><Send size={16}/>Send tasks</button>{sent&&<div className="success"><Check size={18}/>4 reposts + 6 comments requested; tasks sent to 10 creators.</div>}</div></section>;
   if(page==='Creator Directory'||page==='Rate Management') return <section><Hero eyebrow="Network" title={page} text={page==='Rate Management'?'Set the rates that safely power creator invoices.':'A clear view of your creator network and its capacity.'}/><div className="toolbar"><input placeholder="Search creators"/><button className="secondary">Filter by industry</button><span>{creators.length} creators</span></div><div className="card tablewrap"><table><thead><tr><th>Creator</th><th>Industry</th><th>Followers</th><th>₹ / Repost</th><th>₹ / Comment</th><th>Status</th></tr></thead><tbody>{creators.map(c=><tr key={c.email}><td><b>{c.name}</b><small>{c.email}</small></td><td>{c.industry}</td><td>{c.followers.toLocaleString('en-IN')}</td><td>{page==='Rate Management'?<input className="rate" defaultValue={c.rateRepost ?? ''} placeholder="—"/>:c.rateRepost?money(c.rateRepost):<Pill kind="bad">Rate pending</Pill>}</td><td>{page==='Rate Management'?<input className="rate" defaultValue={c.rateComment ?? ''} placeholder="—"/>:c.rateComment?money(c.rateComment):'—'}</td><td><Pill kind={c.status==='Active'?'good':'neutral'}>{c.status}</Pill></td></tr>)}</tbody></table></div></section>;
@@ -35,7 +69,7 @@ function App(){
   if(page==='Admin') return <section><Hero eyebrow="Control room" title="Admin" text="Manage company access and the creator pool."/><div className="card form"><h3>Add team member</h3><label>Email<input placeholder="new.member@yosomedia.in"/></label><label>Role<select><option>Account manager</option><option>Founder / Finance</option><option>Co-founder</option></select></label><button className="primary">Add team member</button></div></section>;
   return <Dashboard/>;
  };
- return <div className="app"><aside><div className="logo">YOSO<span>.</span></div><p className="motto">Reach isn't luck.<br/>It's engineered.</p><nav>{nav.map(n=><button key={n} className={page===n?'active':''} onClick={()=>setPage(n)}>{n==='Money Dashboard'?<CircleDollarSign/>:n.includes('Dashboard')?<LayoutDashboard/>:n.includes('Creator')?<Users/>:n.includes('Task')?<ClipboardList/>:n.includes('Invoice')||n==='Approvals'||n==='Payments'?<FileText/>:n==='Admin'?<Settings/>:<Plus/>}{n}</button>)}</nav><div className="side-bottom"><div className="role-select"><label>Preview as</label><select value={role} onChange={e=>{setRole(e.target.value as Role);setPage(e.target.value==='creator'?'My Tasks':e.target.value==='account_manager'?'Distribute Post':'Money Dashboard')}}><option value="founder_finance">Founder / Finance</option><option value="account_manager">Account manager</option><option value="creator">Creator</option></select></div><button onClick={()=>setSignedIn(false)}><LogOut/>Sign out</button></div></aside><main className="content"><header><div><Pill kind="neutral">{role.replace('_',' ')}</Pill></div><div className="profile"><Bell size={18}/><span>raghvendra@yosomedia.in</span><b>R</b></div></header>{render()}</main></div>;
+ return <div className="app"><aside><div className="logo">YOSO<span>.</span></div><p className="motto">Reach isn't luck.<br/>It's engineered.</p><nav>{nav.map(n=><button key={n} className={page===n?'active':''} onClick={()=>setPage(n)}>{n==='Money Dashboard'?<CircleDollarSign/>:n.includes('Dashboard')?<LayoutDashboard/>:n.includes('Creator')?<Users/>:n.includes('Task')?<ClipboardList/>:n.includes('Invoice')||n==='Approvals'||n==='Payments'?<FileText/>:n==='Admin'?<Settings/>:<Plus/>}{n}</button>)}</nav><div className="side-bottom"><button onClick={signOut}><LogOut/>Sign out</button></div></aside><main className="content"><header><div><Pill kind="neutral">{role.replace('_',' ')}</Pill></div><div className="profile"><Bell size={18}/><span>{user.email}</span><b>{user.email.charAt(0).toUpperCase()}</b></div></header>{render()}</main></div>;
 }
 function Hero({eyebrow,title,text}:{eyebrow:string,title:string,text:string}){return <div className="hero"><span>{eyebrow}</span><h1>{title}</h1><p>{text}</p></div>}
 function Dashboard({ops=false}:{ops?:boolean}){return <section><Hero eyebrow={ops?'Operations':'Finance'} title={ops?'Operations dashboard':'Money dashboard'} text={ops?'The shape of work across your creator network.':'A clean read on payouts, flags, and what needs your attention.'}/><div className="kpis">{(ops?[['Active creators','4'],['Inactive creators','1'],['Posts this month','12'],['Tasks completed','86%']]:[['Paid this month','₹1,24,500'],['Paid YTD','₹6,48,200'],['Rate flags','1'],['Bank mismatches','1']]).map(([a,b],i)=><div className="metric" key={a}><small>{a}</small><strong className={i>1?'warning':''}>{b}</strong></div>)}</div><div className="grid"><div className="card chart"><h3>{ops?'Creator rotation':'Monthly payout'}</h3><div className="bars"><i style={{height:'42%'}}/><i style={{height:'61%'}}/><i style={{height:'85%'}}/><i style={{height:'54%'}}/><i style={{height:'76%'}}/><i style={{height:'93%'}}/></div><div className="axis"><span>Jan</span><span>Mar</span><span>May</span><span>Jun</span></div></div><div className="card insights"><h3>Needs attention</h3><p><Pill kind="bad">Rate pending</Pill> Arjun Mehta</p><p><Pill kind="bad">Bank mismatch</Pill> Sneha Patil</p><p><Pill kind="pending">Unpaid</Pill> 3 invoices await payment</p></div></div></section>}
