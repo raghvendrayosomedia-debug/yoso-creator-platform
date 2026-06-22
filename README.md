@@ -11,6 +11,10 @@ YOSO replaces the manual LinkedIn creator workflow with a role-safe operations a
 
 The frontend includes a clearly labelled role preview for local UI evaluation. Real roles always come from verified Supabase Google sessions at the API.
 
+### Supabase Google OAuth URLs
+
+In Supabase **Authentication → URL Configuration**, set the Site URL to the Vercel production URL and add both the Vercel production URL and `http://localhost:5173` to Redirect URLs. The app sends Google back to its current origin, completes the OAuth code exchange, and then requests `/me` with the resulting Supabase access token. Personal email addresses are accepted: known emails receive their staff role, while new emails become creators and complete onboarding.
+
 ## Security model
 
 - Creators can only fetch and mutate their own profile, tasks, and invoices.
