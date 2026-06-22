@@ -1,0 +1,11 @@
+# Railway deploys this repository as the backend service only.
+# The frontend is intentionally not installed, built, or served here.
+
+[phases.install]
+cmds = ["cd backend && npm ci"]
+
+[phases.build]
+cmds = ["cd backend && npm run build"]
+
+[start]
+cmd = "cd backend && npm run start"
