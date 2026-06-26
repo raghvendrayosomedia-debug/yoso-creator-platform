@@ -11,20 +11,23 @@ type AuthenticatedUser = { id: string; email: string; role: Role; creatorId?: st
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const productionApiBaseUrl = 'https://yoso-creator-platform-production.up.railway.app';
+const isLocalHost = (hostname:string) => ['localhost', '127.0.0.1'].includes(hostname);
 const normalizeApiBaseUrl = (value?: string) => {
-  const configured = value?.trim() || productionApiBaseUrl;
+  const configured = value?.trim();
+  if (!configured) return productionApiBaseUrl;
   try {
     const url = new URL(configured);
     url.hash = ''; url.search = '';
     const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api$/, '');
-    return `${url.origin}${pathname}`;
+    const normalized = `${url.origin}${pathname}`;
+    const pointsAtFrontend = typeof window !== 'undefined' && url.origin === window.location.origin && !isLocalHost(window.location.hostname);
+    return pointsAtFrontend ? productionApiBaseUrl : normalized;
   } catch {
     return productionApiBaseUrl;
   }
 };
 const configuredApiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL as string | undefined);
-const isLocalApp = ['localhost', '127.0.0.1'].includes(window.location.hostname);
-const apiBaseUrl = isLocalApp ? configuredApiBaseUrl : productionApiBaseUrl;
+const apiBaseUrl = configuredApiBaseUrl;
 const apiUrl = (path:string) => `${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey, {
   auth: { autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce', persistSession: true }
@@ -46,7 +49,9 @@ const apiFetch = async (path:string, init:RequestInit = {}, accessToken?:string)
   const token = accessToken ?? await getAccessToken();
   headers.set('Authorization', `Bearer ${token}`);
   if (init.body && !headers.has('Content-Type') && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
-  return fetch(apiUrl(path), { ...init, headers });
+  const url = apiUrl(path);
+  if (path === '/me') console.info('YOSO /me request', { url, hasBearerToken: headers.get('Authorization')?.startsWith('Bearer ') === true });
+  return fetch(url, { ...init, headers });
 };
 type Creator = { name:string; industry:string; followers:number; rateRepost:number|null; rateComment:number|null; status:'Active'|'Inactive'; email:string };
 const creators: Creator[] = [
