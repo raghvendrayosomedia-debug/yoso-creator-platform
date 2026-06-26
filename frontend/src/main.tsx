@@ -10,7 +10,22 @@ type AuthenticatedUser = { id: string; email: string; role: Role; creatorId?: st
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '');
+const productionApiBaseUrl = 'https://yoso-creator-platform-production.up.railway.app';
+const normalizeApiBaseUrl = (value?: string) => {
+  const configured = value?.trim() || productionApiBaseUrl;
+  try {
+    const url = new URL(configured);
+    url.hash = ''; url.search = '';
+    const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api$/, '');
+    return `${url.origin}${pathname}`;
+  } catch {
+    return productionApiBaseUrl;
+  }
+};
+const configuredApiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL as string | undefined);
+const isLocalApp = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const apiBaseUrl = isLocalApp ? configuredApiBaseUrl : productionApiBaseUrl;
+const apiUrl = (path:string) => `${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey, {
   auth: { autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce', persistSession: true }
 }) : null;
@@ -31,7 +46,7 @@ const apiFetch = async (path:string, init:RequestInit = {}, accessToken?:string)
   const token = accessToken ?? await getAccessToken();
   headers.set('Authorization', `Bearer ${token}`);
   if (init.body && !headers.has('Content-Type') && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
-  return fetch(`${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`, { ...init, headers });
+  return fetch(apiUrl(path), { ...init, headers });
 };
 type Creator = { name:string; industry:string; followers:number; rateRepost:number|null; rateComment:number|null; status:'Active'|'Inactive'; email:string };
 const creators: Creator[] = [
@@ -66,7 +81,7 @@ function App(){
      loadedAccessToken.current = session.access_token;
      try {
        const response = await apiFetch('/me', {}, session.access_token);
-       if (!response.ok) { loadedAccessToken.current = null; await supabase.auth.signOut(); setAuthError(`We could not verify your YOSO account. The API did not return your profile from ${apiBaseUrl}/me.`); setUser(null); setLoading(false); return; }
+       if (!response.ok) { loadedAccessToken.current = null; await supabase.auth.signOut(); setAuthError(`We could not verify your YOSO account. The API did not return your profile from ${apiUrl('/me')}.`); setUser(null); setLoading(false); return; }
        const profile = await response.json() as AuthenticatedUser;
        clearAuthCallbackParams();
        setUser(profile); setOnboarding(profile.role === 'creator' && !profile.creatorId); setPage(profile.role === 'creator' ? 'My Tasks' : profile.role === 'account_manager' ? 'Distribute Post' : 'Money Dashboard'); setLoading(false);
