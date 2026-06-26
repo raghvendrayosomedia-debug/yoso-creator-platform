@@ -12,8 +12,27 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '');
 const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey, {
-  auth: { detectSessionInUrl: false, flowType: 'pkce' }
+  auth: { autoRefreshToken: true, detectSessionInUrl: true, flowType: 'pkce', persistSession: true }
 }) : null;
+const hasAuthCallbackParams = () => new URLSearchParams(window.location.search).has('code') || window.location.hash.includes('access_token');
+const clearAuthCallbackParams = () => {
+  if (hasAuthCallbackParams()) window.history.replaceState({}, document.title, window.location.pathname);
+};
+const getAccessToken = async () => {
+  if (!supabase) throw new Error('Authentication is not configured.');
+  const { data, error } = await supabase.auth.getSession();
+  if (error) throw error;
+  if (!data.session?.access_token) throw new Error('Missing Supabase session.');
+  return data.session.access_token;
+};
+const apiFetch = async (path:string, init:RequestInit = {}, accessToken?:string) => {
+  if (!apiBaseUrl) throw new Error('API is not configured.');
+  const headers = new Headers(init.headers);
+  const token = accessToken ?? await getAccessToken();
+  headers.set('Authorization', `Bearer ${token}`);
+  if (init.body && !headers.has('Content-Type') && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  return fetch(`${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`, { ...init, headers });
+};
 type Creator = { name:string; industry:string; followers:number; rateRepost:number|null; rateComment:number|null; status:'Active'|'Inactive'; email:string };
 const creators: Creator[] = [
   {name:'Ravi Kumar',industry:'Finance',followers:18400,rateRepost:150,rateComment:50,status:'Active',email:'ravi@gmail.com'},
@@ -39,31 +58,41 @@ function App(){
  const loadedAccessToken = useRef<string | null>(null);
  useEffect(() => {
    if (!supabase || !apiBaseUrl) { setAuthError('Authentication is not configured. Add the VITE_SUPABASE_* and VITE_API_BASE_URL variables.'); setLoading(false); return; }
+   let cancelled = false;
    const loadAuthenticatedUser = async (session: Session) => {
+     if (cancelled) return;
+     if (!session.access_token) { setLoading(false); return; }
      if (loadedAccessToken.current === session.access_token) return;
      loadedAccessToken.current = session.access_token;
-     const response = await fetch(`${apiBaseUrl}/me`, { headers: { Authorization: `Bearer ${session.access_token}` } });
-     if (!response.ok) { loadedAccessToken.current = null; await supabase.auth.signOut(); setAuthError(`We could not verify your YOSO account. The API did not return your profile from ${apiBaseUrl}/me.`); setUser(null); setLoading(false); return; }
-     const profile = await response.json() as AuthenticatedUser;
-     setUser(profile); setOnboarding(profile.role === 'creator' && !profile.creatorId); setPage(profile.role === 'creator' ? 'My Tasks' : profile.role === 'account_manager' ? 'Distribute Post' : 'Money Dashboard'); setLoading(false);
-   };
-   const completeCallbackAndLoad = async () => {
-     const code = new URLSearchParams(window.location.search).get('code');
-     let session = (await supabase.auth.getSession()).data.session;
-     if (code) {
-       const { data, error } = await supabase.auth.exchangeCodeForSession(code);
-       if (error) { setAuthError(error.message); setLoading(false); return; }
-       session = data.session;
-       window.history.replaceState({}, document.title, window.location.pathname);
+     try {
+       const response = await apiFetch('/me', {}, session.access_token);
+       if (!response.ok) { loadedAccessToken.current = null; await supabase.auth.signOut(); setAuthError(`We could not verify your YOSO account. The API did not return your profile from ${apiBaseUrl}/me.`); setUser(null); setLoading(false); return; }
+       const profile = await response.json() as AuthenticatedUser;
+       clearAuthCallbackParams();
+       setUser(profile); setOnboarding(profile.role === 'creator' && !profile.creatorId); setPage(profile.role === 'creator' ? 'My Tasks' : profile.role === 'account_manager' ? 'Distribute Post' : 'Money Dashboard'); setLoading(false);
+     } catch {
+       loadedAccessToken.current = null; setAuthError('We could not verify your YOSO account. Please sign in again.'); setUser(null); setLoading(false);
      }
-     if (session) await loadAuthenticatedUser(session); else { setUser(null); setLoading(false); }
    };
-   void completeCallbackAndLoad();
+   const finishWithoutSession = () => {
+     if (cancelled) return;
+     setUser(null); setLoading(false);
+   };
    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-     if (event === 'SIGNED_IN' && session) void loadAuthenticatedUser(session);
+     if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) window.setTimeout(() => void loadAuthenticatedUser(session), 0);
+     if (event === 'INITIAL_SESSION' && !session) window.setTimeout(async () => {
+       if (!hasAuthCallbackParams()) { finishWithoutSession(); return; }
+       const { data } = await supabase.auth.getSession();
+       if (data.session) void loadAuthenticatedUser(data.session); else finishWithoutSession();
+     }, 1500);
      if (event === 'SIGNED_OUT') { loadedAccessToken.current = null; setUser(null); setOnboarding(false); setLoading(false); }
    });
-   return () => subscription.unsubscribe();
+   window.setTimeout(async () => {
+     if (loadedAccessToken.current || cancelled) return;
+     const { data } = await supabase.auth.getSession();
+     if (data.session) void loadAuthenticatedUser(data.session); else if (!hasAuthCallbackParams()) finishWithoutSession();
+   }, 2500);
+   return () => { cancelled = true; subscription.unsubscribe(); };
  }, []);
  const signInWithGoogle = async () => {
    if (!supabase) return;
@@ -93,7 +122,7 @@ function App(){
 function Hero({eyebrow,title,text}:{eyebrow:string,title:string,text:string}){return <div className="hero"><span>{eyebrow}</span><h1>{title}</h1><p>{text}</p></div>}
 function CreatorOnboarding({user,onComplete}:{user:AuthenticatedUser,onComplete:(creatorId:string)=>void}){
  const [name,setName]=useState(''),[industry,setIndustry]=useState(''),[followers,setFollowers]=useState(''),[linkedinUrl,setLinkedinUrl]=useState(''),[bankAccount,setBankAccount]=useState(''),[ifsc,setIfsc]=useState(''),[error,setError]=useState<string|null>(null),[saving,setSaving]=useState(false);
- const submit=async(e:React.FormEvent)=>{e.preventDefault();if(!supabase||!apiBaseUrl)return;setSaving(true);setError(null);const {data:{session}}=await supabase.auth.getSession();if(!session){setError('Your session expired. Please sign in again.');setSaving(false);return;}const response=await fetch(`${apiBaseUrl}/creators/onboard`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${session.access_token}`},body:JSON.stringify({name,industry,followers:Number(followers),linkedin_url:linkedinUrl,bank_account:bankAccount,ifsc})});const data=await response.json();if(!response.ok){setError(data.error||'We could not save your details.');setSaving(false);return;}onComplete(data.id);};
+ const submit=async(e:React.FormEvent)=>{e.preventDefault();if(!supabase||!apiBaseUrl)return;setSaving(true);setError(null);try{const response=await apiFetch('/creators/onboard',{method:'POST',body:JSON.stringify({name,industry,followers:Number(followers),linkedin_url:linkedinUrl,bank_account:bankAccount,ifsc})});const data=await response.json();if(!response.ok){setError(data.error||'We could not save your details.');setSaving(false);return;}onComplete(data.id);}catch{setError('Your session expired. Please sign in again.');setSaving(false);}};
  return <main className="splash"><div className="onboarding"><div className="logo">YOSO<span>.</span></div><h1>Welcome to YOSO</h1><p>Tell us a little about your creator profile to get started.</p><form onSubmit={submit} className="onboarding-form"><label>Name<input required value={name} onChange={e=>setName(e.target.value)}/></label><label>Industry<select required value={industry} onChange={e=>setIndustry(e.target.value)}><option value="">Select industry</option><option>Finance</option><option>Tech/SaaS</option><option>D2C/Retail</option><option>Health/Wellness</option><option>Other</option></select></label><label>Followers<input required min="0" type="number" value={followers} onChange={e=>setFollowers(e.target.value)}/></label><label>LinkedIn profile URL<input required type="url" value={linkedinUrl} onChange={e=>setLinkedinUrl(e.target.value)}/></label><label>Bank account number<input required value={bankAccount} onChange={e=>setBankAccount(e.target.value)}/></label><label>IFSC code<input required value={ifsc} onChange={e=>setIfsc(e.target.value)}/></label>{error&&<p className="auth-error">{error}</p>}<button disabled={saving} className="primary" type="submit">{saving?'Saving…':'Complete onboarding'}</button></form></div></main>;
 }
 function Dashboard({ops=false}:{ops?:boolean}){return <section><Hero eyebrow={ops?'Operations':'Finance'} title={ops?'Operations dashboard':'Money dashboard'} text={ops?'The shape of work across your creator network.':'A clean read on payouts, flags, and what needs your attention.'}/><div className="kpis">{(ops?[['Active creators','4'],['Inactive creators','1'],['Posts this month','12'],['Tasks completed','86%']]:[['Paid this month','₹1,24,500'],['Paid YTD','₹6,48,200'],['Rate flags','1'],['Bank mismatches','1']]).map(([a,b],i)=><div className="metric" key={a}><small>{a}</small><strong className={i>1?'warning':''}>{b}</strong></div>)}</div><div className="grid"><div className="card chart"><h3>{ops?'Creator rotation':'Monthly payout'}</h3><div className="bars"><i style={{height:'42%'}}/><i style={{height:'61%'}}/><i style={{height:'85%'}}/><i style={{height:'54%'}}/><i style={{height:'76%'}}/><i style={{height:'93%'}}/></div><div className="axis"><span>Jan</span><span>Mar</span><span>May</span><span>Jun</span></div></div><div className="card insights"><h3>Needs attention</h3><p><Pill kind="bad">Rate pending</Pill> Arjun Mehta</p><p><Pill kind="bad">Bank mismatch</Pill> Sneha Patil</p><p><Pill kind="pending">Unpaid</Pill> 3 invoices await payment</p></div></div></section>}
