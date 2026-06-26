@@ -25,6 +25,7 @@ async function reassign(task:any){const {data:post}=await supabase.from('posts')
 const currentUser=(req:AuthRequest,res:Response)=>res.json(req.user);
 app.get('/me',auth,currentUser);
 app.get('/api/me',auth,currentUser);
+app.post('/users',auth,admin,async(req,res,next)=>{try{const b=z.object({email:z.string().email(),name:z.string().optional(),role:z.enum(['founder_finance','cofounder','account_manager','creator'])}).parse(req.body);const {data,error}=await supabase.from('users').upsert(b,{onConflict:'email'}).select().single();if(error)throw error;res.status(201).json(data);}catch(e){next(e)}});
 const profile=z.object({name:z.string().min(1),industry:z.string().optional(),followers:z.number().int().nonnegative().optional(),linkedin_url:z.string().url().optional(),bank_account:z.string().optional(),ifsc:z.string().optional()});
 app.post('/creators/onboard',auth,creator,async(req:AuthRequest,res,next)=>{try{const p=profile.parse(req.body);const record={...p,email:req.user!.email,user_id:req.user!.id,onboarded_at:new Date().toISOString()};const {data,error}=await supabase.from('creators').upsert(record,{onConflict:'email'}).select().single();if(error)throw error;res.json(data);}catch(e){next(e)}});
 app.get('/creators/me',auth,creator,async(req:AuthRequest,res,next)=>{try{const {data,error}=await supabase.from('creators').select('*').eq('email',req.user!.email).maybeSingle();if(error)throw error;if(!data)return res.status(404).json({error:'Creator profile not found'});res.json(data);}catch(e){next(e)}});
