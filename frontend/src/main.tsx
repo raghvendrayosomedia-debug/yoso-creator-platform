@@ -1,5 +1,5 @@
 /// <reference types="vite/client" />
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { createClient, type Session } from '@supabase/supabase-js';
 import { Bell, Check, ChevronRight, CircleDollarSign, ClipboardList, FileText, LayoutDashboard, LogOut, Plus, Send, Settings, Users } from 'lucide-react';
@@ -11,7 +11,9 @@ type AuthenticatedUser = { id: string; email: string; role: Role; creatorId?: st
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '');
-const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { detectSessionInUrl: false, flowType: 'pkce' }
+}) : null;
 type Creator = { name:string; industry:string; followers:number; rateRepost:number|null; rateComment:number|null; status:'Active'|'Inactive'; email:string };
 const creators: Creator[] = [
   {name:'Ravi Kumar',industry:'Finance',followers:18400,rateRepost:150,rateComment:50,status:'Active',email:'ravi@gmail.com'},
@@ -34,11 +36,14 @@ function App(){
  const [authError,setAuthError] = useState<string | null>(null);
  const [onboarding,setOnboarding] = useState(false);
  const [page,setPage] = useState('My Tasks'); const [paid,setPaid]=useState<string[]>([]); const [sent,setSent]=useState(false);
+ const loadedAccessToken = useRef<string | null>(null);
  useEffect(() => {
    if (!supabase || !apiBaseUrl) { setAuthError('Authentication is not configured. Add the VITE_SUPABASE_* and VITE_API_BASE_URL variables.'); setLoading(false); return; }
    const loadAuthenticatedUser = async (session: Session) => {
+     if (loadedAccessToken.current === session.access_token) return;
+     loadedAccessToken.current = session.access_token;
      const response = await fetch(`${apiBaseUrl}/me`, { headers: { Authorization: `Bearer ${session.access_token}` } });
-     if (!response.ok) { await supabase.auth.signOut(); setAuthError('We could not verify your YOSO account. Please sign in again.'); setUser(null); setLoading(false); return; }
+     if (!response.ok) { loadedAccessToken.current = null; await supabase.auth.signOut(); setAuthError(`We could not verify your YOSO account. The API did not return your profile from ${apiBaseUrl}/me.`); setUser(null); setLoading(false); return; }
      const profile = await response.json() as AuthenticatedUser;
      setUser(profile); setOnboarding(profile.role === 'creator' && !profile.creatorId); setPage(profile.role === 'creator' ? 'My Tasks' : profile.role === 'account_manager' ? 'Distribute Post' : 'Money Dashboard'); setLoading(false);
    };
@@ -56,7 +61,7 @@ function App(){
    void completeCallbackAndLoad();
    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
      if (event === 'SIGNED_IN' && session) void loadAuthenticatedUser(session);
-     if (event === 'SIGNED_OUT') { setUser(null); setOnboarding(false); setLoading(false); }
+     if (event === 'SIGNED_OUT') { loadedAccessToken.current = null; setUser(null); setOnboarding(false); setLoading(false); }
    });
    return () => subscription.unsubscribe();
  }, []);
@@ -66,7 +71,7 @@ function App(){
    const { error } = await supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } });
    if (error) setAuthError(error.message);
  };
- const signOut = async () => { await supabase?.auth.signOut(); setUser(null); setPage('My Tasks'); };
+ const signOut = async () => { loadedAccessToken.current = null; await supabase?.auth.signOut(); setUser(null); setPage('My Tasks'); };
  if(loading) return <main className="splash"><div className="logo">YOSO<span>.</span></div><p>Checking your secure YOSO session…</p></main>;
  if(!user) return <main className="splash"><div className="logo">YOSO<span>.</span></div><h1>Creator operations, engineered.</h1><p>One calm place for every task, invoice, and payment.</p><button onClick={signInWithGoogle} className="primary google">Continue with Google</button>{authError&&<p className="auth-error">{authError}</p>}<small>Sign in to continue.</small></main>;
  if(onboarding) return <CreatorOnboarding user={user} onComplete={(creatorId) => { setUser({ ...user, creatorId }); setOnboarding(false); setPage('My Tasks'); }} />;
