@@ -10,7 +10,7 @@ type User = { id:string; email:string; role:Role; creatorId?:string };
 type CreatorProfile = { id:string; name:string; email:string; industry?:string; region?:string; followers?:number; linkedin_url?:string; bank_account?:string; ifsc?:string; rate_repost?:number|null; rate_comment?:number|null; rate_campaign?:number|null; status:'active'|'inactive' };
 type Task = { id:string; type:'repost'|'comment'; state:string; assigned_at:string; expires_at?:string; screenshot_url?:string; reject_reason?:string; creator_id?:string; posts?:{client:string;link:string}; post_id?:string };
 type Post = { id:string; client:string; link:string; repost_quota:number; comment_quota:number; targeting_mode:string; target_industry?:string; status:string; created_at:string; tasks?:Task[] };
-type Invoice = { id:string; month_label:string; reposts:number; comments:number; amount:number|null; invoice_url?:string|null; invoice_name?:string|null; bank_match:'match'|'mismatch'|'unchecked'; approval_state:'pending'|'approved'|'rejected'; reject_reason?:string; paid:boolean; paid_on?:string|null; creators?:{name:string;email:string;bank_account?:string;ifsc?:string} };
+type Invoice = { id:string; month_label:string; reposts:number; comments:number; claimed_reposts?:number; claimed_comments?:number; verification_state?:'verified'|'mismatch'|'unchecked'; verification_message?:string|null; amount:number|null; invoice_url?:string|null; invoice_name?:string|null; bank_match:'match'|'mismatch'|'unchecked'; approval_state:'pending'|'approved'|'rejected'; reject_reason?:string; paid:boolean; paid_on?:string|null; creators?:{name:string;email:string;bank_account?:string;ifsc?:string} };
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const INDUSTRIES = ['Fintech','Marketing','Tech','Finance','D2C/Retail','Health/Wellness','Media/Entertainment','Real Estate','Education','Others'];
@@ -43,6 +43,7 @@ const Pill = ({children, kind='pending'}:{children:React.ReactNode; kind?:'good'
 const Empty = ({children}:{children:React.ReactNode}) => <div className="empty">{children}</div>;
 const Hero = ({eyebrow,title,text}:{eyebrow:string; title:string; text:string}) => <div className="hero"><span>{eyebrow}</span><h1>{title}</h1><p>{text}</p></div>;
 const FileLink = ({href,label='View file'}:{href?:string|null; label?:string}) => href ? <a className="file-link" href={href} target="_blank" rel="noreferrer">{label}</a> : <small>No file</small>;
+const verificationKind = (state?:string) => state === 'verified' ? 'good' : state === 'mismatch' ? 'bad' : 'pending';
 
 async function getAccessToken() {
   if (!supabase) throw new Error('Authentication is not configured.');
@@ -248,10 +249,14 @@ function App() {
     catch (error:any) { setNotice(error.message); }
   };
   const uploadInvoice = () => {
+    const claimedReposts = window.prompt('Claimed reposts for this month?');
+    if (claimedReposts === null) return;
+    const claimedComments = window.prompt('Claimed comments for this month?');
+    if (claimedComments === null) return;
     const input = document.createElement('input'); input.type = 'file'; input.accept = 'application/pdf,image/*';
     input.onchange = async () => {
       const file = input.files?.[0]; if (!file) return;
-      const body = new FormData(); body.append('invoice', file);
+      const body = new FormData(); body.append('invoice', file); body.append('claimed_reposts', claimedReposts); body.append('claimed_comments', claimedComments);
       try { await apiJson('/invoices/upload', { method:'POST', body }); setNotice('Invoice uploaded.'); await refreshCreator(); }
       catch (error:any) { setNotice(error.message); }
     };
@@ -350,7 +355,7 @@ function CreatorOnboarding({onComplete}:{onComplete:(body:any)=>Promise<void>}) 
 }
 
 function InvoiceTable({rows,mine=false,actions}:{rows:Invoice[]; mine?:boolean; actions?:(invoice:Invoice)=>React.ReactNode}) {
-  return <div className="card tablewrap"><table><thead><tr>{!mine&&<th>Creator</th>}<th>Month</th><th>Work</th><th>Amount</th><th>Invoice</th><th>Bank</th><th>Status</th><th>Paid</th>{actions&&<th></th>}</tr></thead><tbody>{rows.map(i=><tr key={i.id}>{!mine&&<td><b>{i.creators?.name || '-'}</b><small>{i.creators?.email || ''}</small></td>}<td>{i.month_label}</td><td>{i.reposts} reposts / {i.comments} comments</td><td className={i.amount==null?'danger':''}>{money(i.amount)}</td><td><FileLink href={i.invoice_url} label={i.invoice_name || 'View invoice'} /></td><td><Pill kind={i.bank_match==='match'?'good':i.bank_match==='mismatch'?'bad':'pending'}>{i.bank_match}</Pill></td><td><Pill kind={i.approval_state==='approved'?'good':i.approval_state==='rejected'?'bad':'pending'}>{i.approval_state}</Pill></td><td>{i.paid?<Pill kind="good">Paid</Pill>:<Pill>Pending</Pill>}</td>{actions&&<td>{actions(i)}</td>}</tr>)}</tbody></table></div>;
+  return <div className="card tablewrap"><table><thead><tr>{!mine&&<th>Creator</th>}<th>Month</th><th>Work</th><th>Amount</th><th>Invoice</th><th>Verification</th><th>Bank</th><th>Status</th><th>Paid</th>{actions&&<th></th>}</tr></thead><tbody>{rows.map(i=><tr key={i.id}>{!mine&&<td><b>{i.creators?.name || '-'}</b><small>{i.creators?.email || ''}</small></td>}<td>{i.month_label}</td><td>{i.reposts} reposts / {i.comments} comments<small>Claimed {i.claimed_reposts ?? 0} / {i.claimed_comments ?? 0}</small></td><td className={i.amount==null?'danger':''}>{money(i.amount)}</td><td><FileLink href={i.invoice_url} label={i.invoice_name || 'View invoice'} /></td><td><Pill kind={verificationKind(i.verification_state)}>{i.verification_state === 'verified' ? 'Verified' : i.verification_state === 'mismatch' ? 'Mismatch' : 'Unchecked'}</Pill><small>{i.verification_message || ''}</small></td><td><Pill kind={i.bank_match==='match'?'good':i.bank_match==='mismatch'?'bad':'pending'}>{i.bank_match}</Pill></td><td><Pill kind={i.approval_state==='approved'?'good':i.approval_state==='rejected'?'bad':'pending'}>{i.approval_state}</Pill></td><td>{i.paid?<Pill kind="good">Paid</Pill>:<Pill>Pending</Pill>}</td>{actions&&<td>{actions(i)}</td>}</tr>)}</tbody></table></div>;
 }
 
 function Dashboard({title,rows}:{title:string; rows:Array<[string,string|number]>}) {
