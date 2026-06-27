@@ -9,7 +9,7 @@ declare module 'web-push' {
 
   const webPush: {
     setVapidDetails(subject: string, publicKey: string, privateKey: string): void;
-    sendNotification(subscription: PushSubscription, payload?: string): Promise<unknown>;
+    sendNotification(subscription: PushSubscription, payload?: string, options?: { TTL?: number; urgency?: 'very-low'|'low'|'normal'|'high'; topic?: string }): Promise<{ statusCode?: number; body?: string; headers?: Record<string,string> }>;
   };
 
   export default webPush;

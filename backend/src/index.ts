@@ -21,20 +21,24 @@ async function auth(req:AuthRequest,res:Response,next:NextFunction){const token=
 const roles=(...allowed:Role[])=>(req:AuthRequest,res:Response,next:NextFunction)=>req.user&&allowed.includes(req.user.role)?next():deny(res);
 const admin=roles('founder_finance','cofounder'), staff=roles('founder_finance','cofounder','account_manager'), creator=roles('creator');
 const month=(d=new Date())=>({key:new Date(d.getFullYear(),d.getMonth(),1).toISOString().slice(0,10),label:d.toLocaleString('en-IN',{month:'long',year:'2-digit',timeZone:'Asia/Kolkata'}).replace(' ','\'')});
-async function notifyCreator(creatorId:string,body:string){
-  console.info('push:notify:start',{creatorId,configured:!!(vapidPublicKey&&vapidPrivateKey)});
-  if(!vapidPublicKey||!vapidPrivateKey)return;
+async function notifyCreator(creatorId:string,body:string,meta:Record<string,unknown>={}){
+  console.info('push:notify:start',{creatorId,configured:!!(vapidPublicKey&&vapidPrivateKey),...meta});
+  if(!vapidPublicKey||!vapidPrivateKey)return {attempted:0,sent:0,failed:0,reason:'missing-vapid'};
   const {data,error}=await supabase.from('push_subscriptions').select('id,endpoint,p256dh,auth').eq('creator_id',creatorId);
-  if(error){console.error('push:notify:load-failed',{creatorId,error:error.message});return;}
+  if(error){console.error('push:notify:load-failed',{creatorId,error:error.message,...meta});return {attempted:0,sent:0,failed:0,reason:'load-failed'};}
   console.info('push:notify:subscriptions',{creatorId,count:data?.length||0});
-  const payload=JSON.stringify({title:'YOSO task assigned',body,url:'/'});
+  const payload=JSON.stringify({title:'YOSO task assigned',body,url:'/',timestamp:new Date().toISOString(),...meta});
+  let sent=0,failed=0;
   for(const row of data||[]){
     const subscription={endpoint:row.endpoint,keys:{p256dh:row.p256dh,auth:row.auth}};
-    try{await webPush.sendNotification(subscription,payload);console.info('push:notify:sent',{creatorId,subscriptionId:row.id});}
-    catch(err:any){console.error('push:notify:send-failed',{creatorId,subscriptionId:row.id,statusCode:err?.statusCode,message:err?.message});if(err?.statusCode===404||err?.statusCode===410)await supabase.from('push_subscriptions').delete().eq('id',row.id);}
+    try{const result=await webPush.sendNotification(subscription,payload,{TTL:300,urgency:'high',topic:'yoso-task'});sent++;console.info('push:notify:accepted',{creatorId,subscriptionId:row.id,statusCode:result?.statusCode,endpointHost:new URL(row.endpoint).host,...meta});}
+    catch(err:any){failed++;console.error('push:notify:send-failed',{creatorId,subscriptionId:row.id,statusCode:err?.statusCode,message:err?.message,body:err?.body,...meta});if(err?.statusCode===404||err?.statusCode===410){await supabase.from('push_subscriptions').delete().eq('id',row.id);console.warn('push:notify:deleted-expired-subscription',{creatorId,subscriptionId:row.id});}}
   }
+  const summary={attempted:data?.length||0,sent,failed};
+  console.info('push:notify:complete',{creatorId,...summary,...meta});
+  return summary;
 }
-async function createTaskForCreator(post:any,creatorId:string,type:'repost'|'comment'){const {error}=await supabase.from('tasks').insert({post_id:post.id,creator_id:creatorId,type});if(error){console.error('task:assign:failed',{postId:post.id,creatorId,type,error:error.message});return;}console.info('task:assign:created',{postId:post.id,creatorId,type});await notifyCreator(creatorId,`New ${type} task for ${post.client} - respond within 2 hours.`);}
+async function createTaskForCreator(post:any,creatorId:string,type:'repost'|'comment'){const {data:task,error}=await supabase.from('tasks').insert({post_id:post.id,creator_id:creatorId,type}).select('id').single();if(error){console.error('task:assign:failed',{postId:post.id,creatorId,type,error:error.message});return;}console.info('task:assign:created',{taskId:task.id,postId:post.id,creatorId,type});await notifyCreator(creatorId,`New ${type} task for ${post.client} - respond within 2 hours.`,{event:'task-assigned',taskId:task.id,postId:post.id,type,client:post.client});}
 async function selectCreator(postId:string,type:'repost'|'comment',mode:string,industry?:string,exclude:string[]=[]){let q=supabase.from('creators').select('id').eq('status','active').not('id','in',`(${exclude.join(',')||'00000000-0000-0000-0000-000000000000'})`);if(mode==='industry'&&industry)q=q.eq('industry',industry);const {data}=await q; if(!data?.length)return null; if(mode!=='random')return data[0]; const start=new Date();start.setDate(1);const {data:tasks}=await supabase.from('tasks').select('creator_id').gte('assigned_at',start.toISOString());const counts=new Map<string,number>();tasks?.forEach(t=>counts.set(t.creator_id,(counts.get(t.creator_id)||0)+1));return [...data].sort((a,b)=>(counts.get(a.id)||0)-(counts.get(b.id)||0))[0];}
 async function assign(post:any,type:'repost'|'comment'){const {data:old}=await supabase.from('tasks').select('creator_id').eq('post_id',post.id).eq('type',type);const pick=await selectCreator(post.id,type,post.targeting_mode,post.target_industry,old?.map(x=>x.creator_id));if(!pick){console.warn('task:assign:no-creator',{postId:post.id,type,mode:post.targeting_mode,industry:post.target_industry});return;}await createTaskForCreator(post,pick.id,type);}
 async function reassign(task:any){const {data:post}=await supabase.from('posts').select('*').eq('id',task.post_id).single();if(!post||post.status==='closed')return;const {count}=await supabase.from('tasks').select('*',{count:'exact',head:true}).eq('post_id',post.id).eq('type',task.type).eq('state','done');const quota=task.type==='repost'?post.repost_quota:post.comment_quota;if((count||0)<quota)await assign(post,task.type);}
@@ -42,6 +46,7 @@ const currentUser=(req:AuthRequest,res:Response)=>res.json(req.user);
 app.get('/me',auth,currentUser);
 app.get('/api/me',auth,currentUser);
 app.post('/push/subscribe',auth,creator,async(req:AuthRequest,res,next)=>{try{const b=z.object({endpoint:z.string().url(),keys:z.object({p256dh:z.string().min(1),auth:z.string().min(1)})}).parse(req.body);console.info('push:subscribe:request',{userId:req.user!.id,creatorId:req.user!.creatorId,endpoint:b.endpoint.slice(0,80)});if(!req.user!.creatorId)return res.status(400).json({error:'Complete onboarding before enabling push notifications.'});const values={user_id:req.user!.id,creator_id:req.user!.creatorId,endpoint:b.endpoint,p256dh:b.keys.p256dh,auth:b.keys.auth,user_agent:req.headers['user-agent'] || null,updated_at:new Date().toISOString()};const {data,error}=await supabase.from('push_subscriptions').upsert(values,{onConflict:'endpoint'}).select('id,endpoint,updated_at').single();if(error)throw error;console.info('push:subscribe:saved',{subscriptionId:data.id,creatorId:req.user!.creatorId});res.status(201).json(data);}catch(e){next(e)}});
+app.post('/push/test',auth,creator,async(req:AuthRequest,res,next)=>{try{if(!req.user!.creatorId)return res.status(400).json({error:'Complete onboarding before testing push notifications.'});const summary=await notifyCreator(req.user!.creatorId,'This is a test push from YOSO.',{event:'test-push',requestedBy:req.user!.id});res.json(summary);}catch(e){next(e)}});
 app.post('/users',auth,admin,async(req,res,next)=>{try{const b=z.object({email:z.string().email(),name:z.string().optional(),role:z.enum(['founder_finance','cofounder','account_manager','creator'])}).parse(req.body);const {data,error}=await supabase.from('users').upsert(b,{onConflict:'email'}).select().single();if(error)throw error;res.status(201).json(data);}catch(e){next(e)}});
 const profile=z.object({name:z.string().min(1),industry:z.string().optional(),region:z.string().optional(),followers:z.number().int().nonnegative().optional(),linkedin_url:z.string().url().optional(),bank_account:z.string().optional(),ifsc:z.string().optional()});
 const creatorSelfSelect='id,name,email,industry,region,followers,linkedin_url,bank_account,ifsc,status,onboarded_at,created_at';
