@@ -15,6 +15,7 @@ type Invoice = { id:string; month_label:string; reposts:number; comments:number;
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const INDUSTRIES = ['Fintech','Marketing','Tech','Finance','D2C/Retail','Health/Wellness','Media/Entertainment','Real Estate','Education','Others'];
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
 const productionApiBaseUrl = 'https://yoso-creator-platform-production.up.railway.app';
 const isLocalHost = (hostname:string) => ['localhost','127.0.0.1'].includes(hostname);
 const normalizeApiBaseUrl = (value?:string) => {
@@ -65,6 +66,34 @@ async function apiJson<T>(path:string, init:RequestInit = {}, accessToken?:strin
   if (!response.ok) throw new Error(data?.error || `Request failed: ${path}`);
   return data as T;
 }
+const urlBase64ToUint8Array = (base64String:string) => {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = window.atob(base64);
+  return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
+};
+async function registerPushNotifications(user:User, accessToken:string) {
+  console.info('push:frontend:start', { role:user.role, hasCreatorId:!!user.creatorId, hasVapidPublicKey:!!vapidPublicKey });
+  if (user.role !== 'creator' || !user.creatorId) { console.info('push:frontend:skip', { reason:'not an onboarded creator' }); return; }
+  if (!vapidPublicKey) { console.warn('push:frontend:skip', { reason:'missing VITE_VAPID_PUBLIC_KEY' }); return; }
+  if (!('serviceWorker' in navigator)) { console.warn('push:frontend:skip', { reason:'service worker unsupported' }); return; }
+  if (!('PushManager' in window)) { console.warn('push:frontend:skip', { reason:'push manager unsupported' }); return; }
+  if (!window.isSecureContext) { console.warn('push:frontend:skip', { reason:'insecure context' }); return; }
+  const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+  console.info('push:frontend:permission', { permission });
+  if (permission !== 'granted') return;
+  const registration = await navigator.serviceWorker.register('/sw.js');
+  console.info('push:frontend:service-worker-registered', { scope:registration.scope });
+  const ready = await navigator.serviceWorker.ready;
+  let subscription = await ready.pushManager.getSubscription();
+  console.info('push:frontend:existing-subscription', { exists:!!subscription });
+  if (!subscription) {
+    subscription = await ready.pushManager.subscribe({ userVisibleOnly:true, applicationServerKey:urlBase64ToUint8Array(vapidPublicKey) });
+    console.info('push:frontend:subscription-created', { endpoint:subscription.endpoint });
+  }
+  await apiJson('/push/subscribe', { method:'POST', body:JSON.stringify(subscription.toJSON()) }, accessToken);
+  console.info('push:frontend:subscription-saved', { endpoint:subscription.endpoint });
+}
 
 function App() {
   const [user,setUser] = useState<User|null>(null);
@@ -73,6 +102,7 @@ function App() {
   const [page,setPage] = useState('My Tasks');
   const [notice,setNotice] = useState<string|null>(null);
   const loadedAccessToken = useRef<string|null>(null);
+  const pushRegisteredAccessToken = useRef<string|null>(null);
 
   const [creators,setCreators] = useState<CreatorProfile[]>([]);
   const [posts,setPosts] = useState<Post[]>([]);
@@ -129,6 +159,13 @@ function App() {
         setUser(profile);
         setPage(profile.role === 'creator' ? (profile.creatorId ? 'My Tasks' : 'Onboarding') : profile.role === 'account_manager' ? 'Distribute Post' : 'Money Dashboard');
         setLoading(false);
+        if (pushRegisteredAccessToken.current !== session.access_token) {
+          pushRegisteredAccessToken.current = session.access_token;
+          void registerPushNotifications(profile, session.access_token).catch(error => {
+            pushRegisteredAccessToken.current = null;
+            console.error('push:frontend:failed', error);
+          });
+        }
       } catch (error:any) {
         loadedAccessToken.current = null; setAuthError(error.message); setUser(null); setLoading(false);
       }
@@ -136,7 +173,7 @@ function App() {
     const { data:{ subscription } } = supabase.auth.onAuthStateChange((event,session) => {
       if ((event === 'INITIAL_SESSION' || event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') && session) void loadUser(session);
       if (event === 'INITIAL_SESSION' && !session) setLoading(false);
-      if (event === 'SIGNED_OUT') { loadedAccessToken.current = null; setUser(null); setLoading(false); }
+      if (event === 'SIGNED_OUT') { loadedAccessToken.current = null; pushRegisteredAccessToken.current = null; setUser(null); setLoading(false); }
     });
     setTimeout(async () => {
       if (loadedAccessToken.current || cancelled) return;
@@ -157,9 +194,11 @@ function App() {
 
   const completeOnboarding = async (body:any) => {
     const profile = await apiJson<CreatorProfile>('/creators/onboard', { method:'POST', body:JSON.stringify(body) });
-    setUser(u => u ? { ...u, creatorId:profile.id } : u);
+    const nextUser = user ? { ...user, creatorId:profile.id } : null;
+    setUser(nextUser);
     setPage('My Tasks');
     setNotice('Onboarding saved.');
+    if (nextUser) void registerPushNotifications(nextUser, await getAccessToken()).catch(error => console.error('push:frontend:failed', error));
   };
   const uploadTaskScreenshot = (taskId:string) => {
     const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*';
