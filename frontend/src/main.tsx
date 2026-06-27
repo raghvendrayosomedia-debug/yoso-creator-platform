@@ -72,19 +72,21 @@ const urlBase64ToUint8Array = (base64String:string) => {
   const rawData = window.atob(base64);
   return Uint8Array.from([...rawData].map(char => char.charCodeAt(0)));
 };
-async function registerPushNotifications(user:User, accessToken:string) {
-  console.info('push:frontend:start', { role:user.role, hasCreatorId:!!user.creatorId, hasVapidPublicKey:!!vapidPublicKey });
+async function registerPushNotifications(user:User, accessToken:string, source:'auto'|'manual'='auto') {
+  console.info('push:frontend:start', { source, role:user.role, hasCreatorId:!!user.creatorId, hasVapidPublicKey:!!vapidPublicKey });
   if (user.role !== 'creator' || !user.creatorId) { console.info('push:frontend:skip', { reason:'not an onboarded creator' }); return; }
   if (!vapidPublicKey) { console.warn('push:frontend:skip', { reason:'missing VITE_VAPID_PUBLIC_KEY' }); return; }
   if (!('serviceWorker' in navigator)) { console.warn('push:frontend:skip', { reason:'service worker unsupported' }); return; }
   if (!('PushManager' in window)) { console.warn('push:frontend:skip', { reason:'push manager unsupported' }); return; }
+  if (!('Notification' in window)) { console.warn('push:frontend:skip', { reason:'notifications unsupported' }); return; }
   if (!window.isSecureContext) { console.warn('push:frontend:skip', { reason:'insecure context' }); return; }
-  const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
-  console.info('push:frontend:permission', { permission });
-  if (permission !== 'granted') return;
   const registration = await navigator.serviceWorker.register('/sw.js');
   console.info('push:frontend:service-worker-registered', { scope:registration.scope });
   const ready = await navigator.serviceWorker.ready;
+  console.info('push:frontend:permission-before-request', { permission:Notification.permission, source });
+  const permission = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+  console.info('push:frontend:permission-after-request', { permission, source });
+  if (permission !== 'granted') { console.warn('push:frontend:permission-not-granted', { permission, source }); return; }
   let subscription = await ready.pushManager.getSubscription();
   console.info('push:frontend:existing-subscription', { exists:!!subscription });
   if (!subscription) {
@@ -101,6 +103,7 @@ function App() {
   const [authError,setAuthError] = useState<string|null>(null);
   const [page,setPage] = useState('My Tasks');
   const [notice,setNotice] = useState<string|null>(null);
+  const [pushNotice,setPushNotice] = useState<string|null>(null);
   const loadedAccessToken = useRef<string|null>(null);
   const pushRegisteredAccessToken = useRef<string|null>(null);
 
@@ -161,7 +164,7 @@ function App() {
         setLoading(false);
         if (pushRegisteredAccessToken.current !== session.access_token) {
           pushRegisteredAccessToken.current = session.access_token;
-          void registerPushNotifications(profile, session.access_token).catch(error => {
+          void registerPushNotifications(profile, session.access_token, 'auto').catch(error => {
             pushRegisteredAccessToken.current = null;
             console.error('push:frontend:failed', error);
           });
@@ -198,7 +201,19 @@ function App() {
     setUser(nextUser);
     setPage('My Tasks');
     setNotice('Onboarding saved.');
-    if (nextUser) void registerPushNotifications(nextUser, await getAccessToken()).catch(error => console.error('push:frontend:failed', error));
+    if (nextUser) void registerPushNotifications(nextUser, await getAccessToken(), 'auto').catch(error => console.error('push:frontend:failed', error));
+  };
+  const enableNotifications = async () => {
+    if (!user) return;
+    setPushNotice('Requesting notification permission...');
+    try {
+      await registerPushNotifications(user, await getAccessToken(), 'manual');
+      const permission = 'Notification' in window ? Notification.permission : 'unsupported';
+      setPushNotice(permission === 'granted' ? 'Notifications enabled for task alerts.' : `Notifications are ${permission}.`);
+    } catch (error:any) {
+      console.error('push:frontend:manual-failed', error);
+      setPushNotice(error.message || 'Could not enable notifications.');
+    }
   };
   const uploadTaskScreenshot = (taskId:string) => {
     const input = document.createElement('input'); input.type = 'file'; input.accept = 'image/*';
@@ -291,7 +306,7 @@ function App() {
   if (page === 'Onboarding') return <CreatorOnboarding onComplete={completeOnboarding} />;
 
   const render = () => {
-    if (page === 'My Tasks') return <section><Hero eyebrow="Creator portal" title="My tasks" text="Your current LinkedIn assignments." />{notice&&<div className="notice">{notice}</div>}{myTasks.map(t => <article className="task" key={t.id}><div><Pill>{t.type.toUpperCase()}</Pill><h3>{t.posts?.client || 'LinkedIn task'}</h3>{t.posts?.link ? <a href={t.posts.link} target="_blank" rel="noreferrer">{t.posts.link}</a> : <small>No link saved</small>}</div><div className="countdown">{t.state}<small>{t.expires_at ? new Date(t.expires_at).toLocaleString('en-IN') : ''}</small></div><div>{t.state === 'sent' && <><button className="primary" onClick={() => uploadTaskScreenshot(t.id)}>Upload screenshot</button><button className="secondary" onClick={() => rejectTask(t.id)}>Reject</button></>}</div></article>)}{!myTasks.length&&<Empty>No tasks right now.</Empty>}</section>;
+    if (page === 'My Tasks') return <section><Hero eyebrow="Creator portal" title="My tasks" text="Your current LinkedIn assignments." /><div className="toolbar"><button className="primary" onClick={enableNotifications}><Bell size={16}/>Enable notifications</button>{pushNotice&&<span>{pushNotice}</span>}</div>{notice&&<div className="notice">{notice}</div>}{myTasks.map(t => <article className="task" key={t.id}><div><Pill>{t.type.toUpperCase()}</Pill><h3>{t.posts?.client || 'LinkedIn task'}</h3>{t.posts?.link ? <a href={t.posts.link} target="_blank" rel="noreferrer">{t.posts.link}</a> : <small>No link saved</small>}</div><div className="countdown">{t.state}<small>{t.expires_at ? new Date(t.expires_at).toLocaleString('en-IN') : ''}</small></div><div>{t.state === 'sent' && <><button className="primary" onClick={() => uploadTaskScreenshot(t.id)}>Upload screenshot</button><button className="secondary" onClick={() => rejectTask(t.id)}>Reject</button></>}</div></article>)}{!myTasks.length&&<Empty>No tasks right now.</Empty>}</section>;
     if (page === 'My Invoices') return <section><Hero eyebrow="Creator portal" title="My invoices" text="Your submitted invoices and payment status." /><div className="toolbar"><button className="primary" onClick={uploadInvoice}><FileText size={16}/>Upload invoice</button>{notice&&<span>{notice}</span>}</div><InvoiceTable rows={myInvoices} mine />{!myInvoices.length&&<Empty>No invoices yet.</Empty>}</section>;
     if (page === 'My Bank Details') return <section><Hero eyebrow="Creator portal" title="My bank details" text="Saved details used for invoice checks." />{notice&&<div className="notice">{notice}</div>}<div className="card form"><label>Account number<input value={bank.bank_account} onChange={e=>setBank({...bank,bank_account:e.target.value})}/></label><label>IFSC code<input value={bank.ifsc} onChange={e=>setBank({...bank,ifsc:e.target.value})}/></label>{myProfile&&<label>LinkedIn profile<input value={myProfile.linkedin_url || ''} readOnly/></label>}<button className="primary" onClick={saveBank}>Save secure details</button></div></section>;
     if (page === 'Distribute Post') return <section><Hero eyebrow="Operations" title="Distribute a post" text="Create real repost and comment tasks for creators." />{notice&&<div className="notice">{notice}</div>}<div className="card form"><label>Client<input value={postForm.client} onChange={e=>setPostForm({...postForm,client:e.target.value})}/></label><label>LinkedIn post link<input type="url" value={postForm.link} onChange={e=>setPostForm({...postForm,link:e.target.value})}/></label><div className="two"><label>Repost quota<input type="number" min="0" value={postForm.repost_quota} onChange={e=>setPostForm({...postForm,repost_quota:Number(e.target.value)})}/></label><label>Comment quota<input type="number" min="0" value={postForm.comment_quota} onChange={e=>setPostForm({...postForm,comment_quota:Number(e.target.value)})}/></label></div><label>Targeting mode<select value={postForm.targeting_mode} onChange={e=>setPostForm({...postForm,targeting_mode:e.target.value})}><option value="random">Random</option><option value="industry">By industry</option></select></label>{postForm.targeting_mode==='industry'&&<label>Target industry<select value={postForm.target_industry} onChange={e=>setPostForm({...postForm,target_industry:e.target.value})}><option value="">Select industry</option>{INDUSTRIES.map(i=><option key={i} value={i}>{i}</option>)}</select></label>}<button className="primary" onClick={distributePost}><Send size={16}/>Send tasks</button></div></section>;
