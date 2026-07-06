@@ -7,6 +7,8 @@ self.addEventListener('push', event => {
   catch (error) { console.error('push:sw:payload-parse-failed', error); data = { body:event.data?.text() }; }
   event.waitUntil(self.registration.showNotification(data.title || 'YOSO task assigned', {
     body: data.body || 'You have a new task in YOSO.',
+    icon: '/yoso-icon.svg',
+    badge: '/yoso-icon.svg',
     data: data.url || '/',
     tag: data.taskId || data.event || 'yoso-task',
     renotify: true,

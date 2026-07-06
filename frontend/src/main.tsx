@@ -47,6 +47,8 @@ const verificationKind = (state?:string) => state === 'verified' ? 'good' : stat
 const monthInfo = (date=new Date()) => ({ key:`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-01`, label:date.toLocaleString('en-IN',{month:'long',year:'2-digit'}).replace(' ','\'') });
 const monthFromKey = (key:string) => { const d = new Date(`${key}T00:00:00.000Z`); return { key, label:d.toLocaleString('en-IN',{month:'long',year:'2-digit',timeZone:'UTC'}).replace(' ','\'') }; };
 const recentMonths = (count=6) => Array.from({length:count},(_,index) => { const now = new Date(); return monthInfo(new Date(now.getFullYear(),now.getMonth()-index,1)); });
+const isIosDevice = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandaloneApp = () => window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as any).standalone);
 
 async function getAccessToken() {
   if (!supabase) throw new Error('Authentication is not configured.');
@@ -85,6 +87,12 @@ async function registerPushNotifications(user:User, accessToken:string, source:'
   if (!('PushManager' in window)) { console.warn('push:frontend:skip', { reason:'push manager unsupported' }); return; }
   if (!('Notification' in window)) { console.warn('push:frontend:skip', { reason:'notifications unsupported' }); return; }
   if (!window.isSecureContext) { console.warn('push:frontend:skip', { reason:'insecure context' }); return; }
+  if (isIosDevice() && !isStandaloneApp()) {
+    const message = 'On iPhone, add YOSO to your Home Screen, open it from that icon, then tap Enable notifications.';
+    console.warn('push:frontend:skip', { reason:'ios requires installed web app' });
+    if (source === 'manual') throw new Error(message);
+    return;
+  }
   const registration = await navigator.serviceWorker.register('/sw.js');
   console.info('push:frontend:service-worker-registered', { scope:registration.scope });
   const ready = await navigator.serviceWorker.ready;
