@@ -20,18 +20,18 @@ const localApiBaseUrl = 'http://localhost:4000';
 const productionApiBaseUrl = '';
 const isLocalHost = (hostname:string) => ['localhost','127.0.0.1'].includes(hostname);
 const normalizeApiBaseUrl = (value?:string) => {
-  const configured = value?.trim();
   const isLocal = typeof window !== 'undefined' && isLocalHost(window.location.hostname);
-  if (!configured) return isLocal ? localApiBaseUrl : productionApiBaseUrl;
+  if (!isLocal) return productionApiBaseUrl;
+  const configured = value?.trim();
+  if (!configured) return localApiBaseUrl;
   try {
     const url = new URL(configured);
     url.hash = ''; url.search = '';
     const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api$/, '');
     const normalized = `${url.origin}${pathname}`;
-    const pointsAtFrontend = typeof window !== 'undefined' && url.origin === window.location.origin && !isLocal;
-    return pointsAtFrontend ? productionApiBaseUrl : normalized;
+    return normalized;
   } catch {
-    return isLocal ? localApiBaseUrl : productionApiBaseUrl;
+    return localApiBaseUrl;
   }
 };
 const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL as string | undefined);
