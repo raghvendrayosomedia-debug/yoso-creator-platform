@@ -17,7 +17,7 @@ const invoiceBucket=process.env.SUPABASE_INVOICE_BUCKET || 'invoices';
 const vapidPublicKey=process.env.VAPID_PUBLIC_KEY, vapidPrivateKey=process.env.VAPID_PRIVATE_KEY;
 if(vapidPublicKey&&vapidPrivateKey){webPush.setVapidDetails(process.env.VAPID_SUBJECT || 'mailto:admin@yosomedia.in',vapidPublicKey,vapidPrivateKey);console.info('push:init',{configured:true,subject:process.env.VAPID_SUBJECT || 'mailto:admin@yosomedia.in'});}else console.warn('push:init',{configured:false,missing:{publicKey:!vapidPublicKey,privateKey:!vapidPrivateKey}});
 const configuredOrigins=(process.env.FRONTEND_URL||'http://localhost:5173').split(',').map(origin=>origin.trim().replace(/\/$/,'')).filter(Boolean);
-const vercelOrigin=/^https:\/\/yoso-creator-platform(?:-[a-z0-9-]+)?\.vercel\.app$/i;
+const vercelOrigin=/^https:\/\/(?:yoso-creator-platform(?:-[a-z0-9-]+)?|frontend-[a-z0-9-]+(?:-[a-z0-9-]+)*)\.vercel\.app$/i;
 app.use(cors({origin:(origin,callback)=>{if(!origin)return callback(null,true);const normalized=origin.replace(/\/$/,'');if(configuredOrigins.includes(normalized)||vercelOrigin.test(normalized))return callback(null,true);callback(null,false);}})); app.use(express.json());
 const deny=(res:Response)=>res.status(403).json({error:'You do not have access to this resource.'});
 const safeFileName=(name:string)=>name.replace(/[^a-zA-Z0-9._-]/g,'_').slice(-120) || 'upload';

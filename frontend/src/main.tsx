@@ -64,7 +64,12 @@ async function apiFetch(path:string, init:RequestInit = {}, accessToken?:string)
   if (init.body && !headers.has('Content-Type') && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   const url = apiUrl(path);
   if (path === '/me') console.info('YOSO /me request', { url, hasBearerToken: headers.get('Authorization')?.startsWith('Bearer ') === true });
-  return fetch(url, { ...init, headers });
+  try {
+    return await fetch(url, { ...init, headers });
+  } catch (error) {
+    console.error('YOSO API fetch failed', { url, path, error });
+    throw new Error('Could not reach the YOSO backend. Please try again after the latest deployment finishes.');
+  }
 }
 async function apiJson<T>(path:string, init:RequestInit = {}, accessToken?:string): Promise<T> {
   const response = await apiFetch(path, init, accessToken);
