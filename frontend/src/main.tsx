@@ -16,20 +16,22 @@ const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const INDUSTRIES = ['Fintech','Marketing','Tech','Finance','D2C/Retail','Health/Wellness','Media/Entertainment','Real Estate','Education','Others'];
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
-const productionApiBaseUrl = 'https://yoso-creator-platform-production.up.railway.app';
+const localApiBaseUrl = 'http://localhost:4000';
+const productionApiBaseUrl = '';
 const isLocalHost = (hostname:string) => ['localhost','127.0.0.1'].includes(hostname);
 const normalizeApiBaseUrl = (value?:string) => {
   const configured = value?.trim();
-  if (!configured) return productionApiBaseUrl;
+  const isLocal = typeof window !== 'undefined' && isLocalHost(window.location.hostname);
+  if (!configured) return isLocal ? localApiBaseUrl : productionApiBaseUrl;
   try {
     const url = new URL(configured);
     url.hash = ''; url.search = '';
     const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api$/, '');
     const normalized = `${url.origin}${pathname}`;
-    const pointsAtFrontend = typeof window !== 'undefined' && url.origin === window.location.origin && !isLocalHost(window.location.hostname);
+    const pointsAtFrontend = typeof window !== 'undefined' && url.origin === window.location.origin && !isLocal;
     return pointsAtFrontend ? productionApiBaseUrl : normalized;
   } catch {
-    return productionApiBaseUrl;
+    return isLocal ? localApiBaseUrl : productionApiBaseUrl;
   }
 };
 const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL as string | undefined);
