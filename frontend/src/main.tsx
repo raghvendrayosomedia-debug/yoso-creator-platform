@@ -49,6 +49,10 @@ const verificationKind = (state?:string) => state === 'verified' ? 'good' : stat
 const monthInfo = (date=new Date()) => ({ key:`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-01`, label:date.toLocaleString('en-IN',{month:'long',year:'2-digit'}).replace(' ','\'') });
 const monthFromKey = (key:string) => { const d = new Date(`${key}T00:00:00.000Z`); return { key, label:d.toLocaleString('en-IN',{month:'long',year:'2-digit',timeZone:'UTC'}).replace(' ','\'') }; };
 const recentMonths = (count=6) => Array.from({length:count},(_,index) => { const now = new Date(); return monthInfo(new Date(now.getFullYear(),now.getMonth()-index,1)); });
+const ALL_INVOICES_KEY = 'all';
+const UNFILED_INVOICES_KEY = 'unfiled';
+const invoiceMonthKey = (invoice:Invoice) => invoice.month_key || (invoice.month_label ? `label:${invoice.month_label}` : UNFILED_INVOICES_KEY);
+const invoiceMonthOption = (key:string) => key === ALL_INVOICES_KEY ? { key, label:'All invoices' } : key === UNFILED_INVOICES_KEY ? { key, label:'Needs month' } : key.startsWith('label:') ? { key, label:key.slice(6) } : monthFromKey(key);
 const isIosDevice = () => /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const isStandaloneApp = () => window.matchMedia('(display-mode: standalone)').matches || Boolean((navigator as any).standalone);
 
@@ -143,7 +147,7 @@ function App() {
   const [invoiceClaim,setInvoiceClaim] = useState({claimed_reposts:'',claimed_comments:'',claimed_amount:''});
   const [selectedInvoiceMonth,setSelectedInvoiceMonth] = useState(monthInfo().key);
   const [selectedInvoiceMonths,setSelectedInvoiceMonths] = useState<string[]>([monthInfo().key]);
-  const [financeInvoiceMonth,setFinanceInvoiceMonth] = useState(monthInfo().key);
+  const [financeInvoiceMonth,setFinanceInvoiceMonth] = useState(ALL_INVOICES_KEY);
   const [rateEdits,setRateEdits] = useState<Record<string,{rate_repost:string;rate_comment:string;rate_campaign:string}>>({});
   const [creatorFilters,setCreatorFilters] = useState({industry:'',region:'',followersMin:'',followersMax:'',rateMin:'',rateMax:''});
   const [newUser,setNewUser] = useState({email:'',name:'',role:'account_manager' as Role});
@@ -307,13 +311,13 @@ function App() {
     setNotice(`Invoice ${action} complete.`); await refreshStaff();
   };
   const downloadBankFile = async () => {
-    const month = financeInvoiceMonth || currentMonth.key;
-    const response = await apiFetch(`/invoices/export?month=${encodeURIComponent(month)}`);
+    const month = financeInvoiceMonth === ALL_INVOICES_KEY ? '' : financeInvoiceMonth.startsWith('label:') ? financeInvoiceMonth.slice(6) : financeInvoiceMonth;
+    const response = await apiFetch(month ? `/invoices/export?month=${encodeURIComponent(month)}` : '/invoices/export');
     if (!response.ok) { setNotice('Could not download bank file.'); return; }
     const blob = await response.blob();
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url; link.download = `yoso-bank-${month || 'approved'}.csv`; link.click();
+    link.href = url; link.download = `yoso-bank-${month || 'all-approved'}.csv`; link.click();
     URL.revokeObjectURL(url);
   };
   const addTeamMember = async () => {
@@ -352,11 +356,16 @@ function App() {
   const postEligibleCount = postEligibleCreators.length;
   const setPostQuota = (field:'repost_quota'|'comment_quota',value:number) => setPostForm({...postForm,[field]:Math.max(0,Math.min(Number.isFinite(value)?value:0,postEligibleCount))});
   const currentMonth = monthInfo();
-  const monthOptions = (rows:Invoice[]) => Array.from(new Set([...recentMonths().map(m=>m.key),...rows.map(i=>i.month_key).filter((k):k is string=>!!k)])).sort((a,b)=>b.localeCompare(a)).map(monthFromKey);
+  const monthOptions = (rows:Invoice[],includeAll=false) => {
+    const keys = Array.from(new Set([...recentMonths().map(m=>m.key),...rows.map(invoiceMonthKey)]));
+    const dateKeys = keys.filter(k=>/^\d{4}-\d{2}-01$/.test(k)).sort((a,b)=>b.localeCompare(a));
+    const fallbackKeys = keys.filter(k=>!/^\d{4}-\d{2}-01$/.test(k)).sort((a,b)=>invoiceMonthOption(a).label.localeCompare(invoiceMonthOption(b).label));
+    return [...(includeAll?[invoiceMonthOption(ALL_INVOICES_KEY)]:[]),...dateKeys.map(invoiceMonthOption),...fallbackKeys.map(invoiceMonthOption)];
+  };
   const creatorInvoiceMonths = monthOptions(myInvoices);
-  const financeInvoiceMonths = monthOptions(invoices);
-  const visibleMyInvoices = myInvoices.filter(i=>(i.month_key || '')===selectedInvoiceMonth);
-  const visibleFinanceInvoices = invoices.filter(i=>(i.month_key || '')===financeInvoiceMonth);
+  const financeInvoiceMonths = monthOptions(invoices,true);
+  const visibleMyInvoices = myInvoices.filter(i=>invoiceMonthKey(i)===selectedInvoiceMonth);
+  const visibleFinanceInvoices = financeInvoiceMonth === ALL_INVOICES_KEY ? invoices : invoices.filter(i=>invoiceMonthKey(i)===financeInvoiceMonth);
   const financeMonthCreators = creators.map(c => {
     const rows = visibleFinanceInvoices.filter(i=>i.creators?.id===c.id);
     return { creator:c, rows, amount:rows.reduce((sum,i)=>sum+Number(i.amount||0),0), paid:rows.filter(i=>i.paid).length };
