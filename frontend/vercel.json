@@ -1,13 +1,1 @@
-{
-  "rewrites": [
-    { "source": "/me", "destination": "https://yoso-creator-platform-production.up.railway.app/me" },
-    { "source": "/api/:path*", "destination": "https://yoso-creator-platform-production.up.railway.app/api/:path*" },
-    { "source": "/push/:path*", "destination": "https://yoso-creator-platform-production.up.railway.app/push/:path*" },
-    { "source": "/users", "destination": "https://yoso-creator-platform-production.up.railway.app/users" },
-    { "source": "/creators/:path*", "destination": "https://yoso-creator-platform-production.up.railway.app/creators/:path*" },
-    { "source": "/posts/:path*", "destination": "https://yoso-creator-platform-production.up.railway.app/posts/:path*" },
-    { "source": "/tasks/:path*", "destination": "https://yoso-creator-platform-production.up.railway.app/tasks/:path*" },
-    { "source": "/invoices/:path*", "destination": "https://yoso-creator-platform-production.up.railway.app/invoices/:path*" },
-    { "source": "/dashboard/:path*", "destination": "https://yoso-creator-platform-production.up.railway.app/dashboard/:path*" }
-  ]
-}
+{}

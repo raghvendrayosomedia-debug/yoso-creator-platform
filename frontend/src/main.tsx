@@ -17,7 +17,7 @@ const INDUSTRIES = ['Fintech','Marketing','Tech','Finance','D2C/Retail','Health/
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
 const localApiBaseUrl = 'http://localhost:4000';
-const productionApiBaseUrl = 'https://yoso-creator-platform-production.up.railway.app';
+const productionApiBaseUrl = 'https://yoso-creator-platform.vercel.app/api';
 const isLocalHost = (hostname:string) => ['localhost','127.0.0.1'].includes(hostname);
 const normalizeApiBaseUrl = (value?:string) => {
   const isLocal = typeof window !== 'undefined' && isLocalHost(window.location.hostname);
@@ -26,7 +26,7 @@ const normalizeApiBaseUrl = (value?:string) => {
   try {
     const url = new URL(configured);
     url.hash = ''; url.search = '';
-    const pathname = url.pathname.replace(/\/+$/, '').replace(/\/api$/, '');
+    const pathname = url.pathname.replace(/\/+$/, '');
     const normalized = `${url.origin}${pathname}`;
     return normalized;
   } catch {
