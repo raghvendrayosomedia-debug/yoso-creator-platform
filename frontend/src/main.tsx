@@ -17,13 +17,12 @@ const INDUSTRIES = ['Fintech','Marketing','Tech','Finance','D2C/Retail','Health/
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY as string | undefined;
 const localApiBaseUrl = 'http://localhost:4000';
-const productionApiBaseUrl = '';
+const productionApiBaseUrl = 'https://yoso-creator-platform-production.up.railway.app';
 const isLocalHost = (hostname:string) => ['localhost','127.0.0.1'].includes(hostname);
 const normalizeApiBaseUrl = (value?:string) => {
   const isLocal = typeof window !== 'undefined' && isLocalHost(window.location.hostname);
-  if (!isLocal) return productionApiBaseUrl;
   const configured = value?.trim();
-  if (!configured) return localApiBaseUrl;
+  if (!configured) return isLocal ? localApiBaseUrl : productionApiBaseUrl;
   try {
     const url = new URL(configured);
     url.hash = ''; url.search = '';
@@ -31,10 +30,10 @@ const normalizeApiBaseUrl = (value?:string) => {
     const normalized = `${url.origin}${pathname}`;
     return normalized;
   } catch {
-    return localApiBaseUrl;
+    return isLocal ? localApiBaseUrl : productionApiBaseUrl;
   }
 };
-const apiBaseUrl = normalizeApiBaseUrl(import.meta.env.VITE_API_BASE_URL as string | undefined);
+const apiBaseUrl = normalizeApiBaseUrl((import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL) as string | undefined);
 const apiUrl = (path:string) => `${apiBaseUrl}${path.startsWith('/') ? path : `/${path}`}`;
 const supabase = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey, {
   auth: { autoRefreshToken:true, detectSessionInUrl:true, flowType:'pkce', persistSession:true }
